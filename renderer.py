@@ -120,58 +120,106 @@ class Renderer:
         if x0 > x1 or y0 > y1:
             return
 
-        px = (np.arange(x0, x1 + 1, dtype=np.float32) + 0.5)[None, :]
-        py = (np.arange(y0, y1 + 1, dtype=np.float32) + 0.5)[:, None]
+        px = (np.arange(x0, x1 + 1, dtype=np.float32) + np.float32(0.5))[None, :]
+        py = (np.arange(y0, y1 + 1, dtype=np.float32) + np.float32(0.5))[:, None]
 
-        # Broadcasting instead of meshgrid: same weights, no (h, w) temporaries
-        wa = ((px - b[0]) * (c[1] - b[1]) - (py - b[1]) * (c[0] - b[0])) / area
-        wb = ((px - c[0]) * (a[1] - c[1]) - (py - c[1]) * (a[0] - c[0])) / area
-        wc = ((px - a[0]) * (b[1] - a[1]) - (py - a[1]) * (b[0] - a[0])) / area
+        # float32 scalars on purpose: mixing a float32 grid with Python floats
+        # promotes every temporary to float64 and doubles the memory traffic
+        ax, ay = np.float32(a[0]), np.float32(a[1])
+        bx, by = np.float32(b[0]), np.float32(b[1])
+        cx, cy = np.float32(c[0]), np.float32(c[1])
+        area = np.float32(area)
+
+        # Broadcasting instead of meshgrid: same weights, no (h, w) temporaries.
+        # wc = 1 - wa - wb because the barycentric weights always sum to one, so
+        # only two edge functions are evaluated here.
+        wa = ((px - bx) * (cy - by) - (py - by) * (cx - bx)) / area
+        wb = ((px - cx) * (ay - cy) - (py - cy) * (ax - cx)) / area
+        wc = np.float32(1.0) - wa - wb
 
         mask = (wa >= -1e-9) & (wb >= -1e-9) & (wc >= -1e-9)
         if not mask.any():
             return
 
-        inv_z = wa / a[2] + wb / b[2] + wc / c[2]
-        keep = mask & (inv_z > 0.0)
-        if not keep.any():
+        # Everything below works on the covered pixels only, so a triangle that
+        # covers a small part of a large bounding box pays for the pixels it owns.
+        rows, cols = np.nonzero(mask)
+        iw = 1.0 / a[2], 1.0 / b[2], 1.0 / c[2]
+        wam = wa[rows, cols]
+        wbm = wb[rows, cols]
+        wcm = wc[rows, cols]
+
+        inv_z = wam * iw[0] + wbm * iw[1] + wcm * iw[2]
+        front = inv_z > 0.0
+        if not front.any():
             return
+        if not front.all():
+            rows, cols = rows[front], cols[front]
+            wam, wbm, wcm = wam[front], wbm[front], wcm[front]
+            inv_z = inv_z[front]
 
-        z = np.where(keep, 1.0 / np.where(inv_z > 0, inv_z, 1.0), np.inf)
-
+        z = 1.0 / inv_z
         depth_view = self.depth[y0:y1 + 1, x0:x1 + 1]
-        win = keep & (z < depth_view)
+        win = z < depth_view[rows, cols]
         if not win.any():
             return
 
-        depth_view[win] = z[win]
+        if not win.all():
+            rows, cols, z = rows[win], cols[win], z[win]
+            wam, wbm, wcm = wam[win], wbm[win], wcm[win]
+            inv_z = inv_z[win]
+
+        depth_view[rows, cols] = z
+        color_view = self.color[y0:y1 + 1, x0:x1 + 1]
 
         if texture is None or uv is None:
             if rgb is None:
                 raise ValueError("draw_triangle needs rgb or texture+uv")
-            self.color[y0:y1 + 1, x0:x1 + 1][win] = rgb
+            color_view[rows, cols] = rgb
             return
 
         tex_h, tex_w = texture.shape[:2]
         tex_flat = texture.reshape(-1, 3)
         (ua, va), (ub, vb), (uc, vc) = uv
 
-        # Perspective-correct UV, evaluated only on visible pixels (handbook 10.3)
-        iz = inv_z[win]
-        waw, wbw, wcw = wa[win], wb[win], wc[win]
-        u = (waw * ua / a[2] + wbw * ub / b[2] + wcw * uc / c[2]) / iz
-        v = (waw * va / a[2] + wbw * vb / b[2] + wcw * vc / c[2]) / iz
+        # Perspective-correct UV on the visible pixels (handbook 10.3): the
+        # per-vertex 1/z is folded once into the attribute, then divided back
+        # out with the interpolated 1/z, which is the same as interpolating u/z.
+        u = (wam * (ua * iw[0]) + wbm * (ub * iw[1]) + wcm * (uc * iw[2])) * z
+        v = (wam * (va * iw[0]) + wbm * (vb * iw[1]) + wcm * (vc * iw[2])) * z
 
         txi = ((u - np.floor(u)) * tex_w).astype(np.int32)
         tyi = ((v - np.floor(v)) * tex_h).astype(np.int32)
         np.clip(txi, 0, tex_w - 1, out=txi)
         np.clip(tyi, 0, tex_h - 1, out=tyi)
 
-        cols = tex_flat[tyi * tex_w + txi].astype(np.float32)
+        cols_rgb = tex_flat[tyi * tex_w + txi]
         if intensity != 1.0:
-            cols *= float(intensity)
-        self.color[y0:y1 + 1, x0:x1 + 1][win] = np.clip(cols, 0, 255).astype(np.uint8)
+            cols_rgb = np.clip(cols_rgb.astype(np.float32) * float(intensity),
+                               0, 255).astype(np.uint8)
+        color_view[rows, cols] = cols_rgb
 
     def to_surface(self, pygame):
         rgb = np.ascontiguousarray(self.color, dtype=np.uint8)
         return pygame.image.frombuffer(rgb.tobytes(), (self.w, self.h), "RGB")
+
+    def depth_visual(self, low=2.0, high=98.0):
+        """Grey image of the Z-buffer: near surfaces bright, far ones dark.
+
+        The debugging view from handbook 14.3 (F3): empty pixels stay black and
+        the rest is stretched over the 2nd..98th percentile of the buffers's own
+        depth range, so the walls, the floor and the props are easy to tell
+        apart instead of being one flat grey.
+        """
+        depth = self.depth
+        filled = np.isfinite(depth)
+        grey = np.zeros(depth.shape, dtype=np.float32)
+        if filled.any():
+            values = depth[filled]
+            lo, hi = np.percentile(values, [low, high])
+            if hi - lo < 1e-9:
+                hi = lo + 1.0
+            span = np.clip((depth - lo) / (hi - lo), 0.0, 1.0)
+            grey = np.where(filled, 255.0 * (1.0 - span), 0.0)
+        image = grey.astype(np.uint8)
+        return np.dstack((image, image, image))

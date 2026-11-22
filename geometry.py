@@ -144,32 +144,34 @@ def scene_faces(boxes, tiles=TILES_PER_UNIT):
     return faces
 
 
-def sphere_mesh(radius, center=(0.0, 0.0, 0.0), rings=8, segments=12):
-    """Latitude/longitude sphere as triangles whose winding faces outwards.
+_UNIT_SPHERES = {}
 
-    Returns a list of (a, b, c, normal) with a, b, c in world space. Low
-    polygonal on purpose: flat shading makes the facets visible, which keeps the
-    polygon count predictable for the software rasterizer.
+
+def _unit_sphere(rings, segments):
+    """Unit sphere at the origin, built once and reused by every sphere_mesh call.
+
+    The worm, the birds and the puddles keep the same mesh every frame, so
+    rebuilding the trigonometry sixty times a second is wasted work: only the
+    scaling and the translation actually change.
     """
-    cx, cy, cz = center
-    rings = max(3, rings)
-    segments = max(3, segments)
+    key = (rings, segments)
+    cached = _UNIT_SPHERES.get(key)
+    if cached is not None:
+        return cached
 
     grid = []
     for i in range(rings + 1):
         phi = math.pi * i / rings
-        ring_y = math.cos(phi) * radius
-        ring_r = math.sin(phi) * radius
+        ring_y = math.cos(phi)
+        ring_r = math.sin(phi)
         row = []
         for j in range(segments):
             theta = 2.0 * math.pi * j / segments
-            row.append(np.array([cx + ring_r * math.cos(theta),
-                                 cy + ring_y,
-                                 cz + ring_r * math.sin(theta)], dtype=float))
+            row.append(np.array([ring_r * math.cos(theta), ring_y,
+                                 ring_r * math.sin(theta)], dtype=float))
         grid.append(row)
 
     triangles = []
-    # top and bottom caps: the pole is one vertex, so no degenerate triangles
     for j in range(segments):
         triangles.append((grid[0][0],
                           grid[1][(j + 1) % segments],
@@ -188,18 +190,34 @@ def sphere_mesh(radius, center=(0.0, 0.0, 0.0), rings=8, segments=12):
             triangles.append((a, c, d))
 
     out = []
-    centre = np.array([cx, cy, cz], dtype=float)
     for a, b, c in triangles:
         normal = np.cross(b - a, c - a)
         length = np.linalg.norm(normal)
         if length < 1e-12:
             continue
         normal = normal / length
-        if float(np.dot(normal, (a + b + c) / 3.0 - centre)) < 0.0:
+        if float(np.dot(normal, (a + b + c) / 3.0)) < 0.0:
             b, c = c, b
             normal = -normal
         out.append((a, b, c, normal))
+
+    _UNIT_SPHERES[key] = out
     return out
+
+
+def sphere_mesh(radius, center=(0.0, 0.0, 0.0), rings=8, segments=12):
+    """Latitude/longitude sphere as triangles whose winding faces outwards.
+
+    Returns a list of (a, b, c, normal) with a, b, c in world space. Low
+    polygonal on purpose: flat shading makes the facets visible, which keeps the
+    polygon count predictable for the software rasterizer.
+    """
+    rings = max(3, rings)
+    segments = max(3, segments)
+    centre = np.array(center, dtype=float)
+    scale = float(radius)
+    return [(a * scale + centre, b * scale + centre, c * scale + centre, normal)
+            for a, b, c, normal in _unit_sphere(rings, segments)]
 
 
 def disc_mesh(radius, center=(0.0, 0.0, 0.0), segments=20):

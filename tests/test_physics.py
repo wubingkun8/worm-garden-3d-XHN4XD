@@ -113,6 +113,22 @@ def test_start_cell_is_free():
     assert player.y == GROUND_Y
 
 
+def test_east_is_right_on_screen():
+    """Looking north, +X must land on the right half of the screen (A/D not swapped)."""
+    from camera import camera_space, perspective_project, camera_basis
+    eye = np.array([0.5, 3.22, 3.70])
+    target = np.array([0.5, 0.25, 2.50])
+    right, _, forward = camera_basis(eye, target)
+    assert np.allclose(right, [1.0, 0.0, 0.0]), "east must be the camera right vector"
+    assert forward[2] < 0, "forward must point north (-Z)"
+
+    here = perspective_project(camera_space(np.array([0.5, 0.0, 2.5]), eye, target), 900, 700)
+    east = perspective_project(camera_space(np.array([1.5, 0.0, 2.5]), eye, target), 900, 700)
+    north = perspective_project(camera_space(np.array([0.5, 0.0, 1.5]), eye, target), 900, 700)
+    assert east[0] > here[0] + 50, "+X must move right on screen"
+    assert north[1] < here[1], "-Z must move up on screen"
+
+
 if __name__ == "__main__":
     tests = [value for name, value in sorted(globals().items())
              if name.startswith("test_") and callable(value)]

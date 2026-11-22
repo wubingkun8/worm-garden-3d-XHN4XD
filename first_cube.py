@@ -16,8 +16,9 @@ def unit(v):
 
 def to_camera(point, eye, target):
     f = unit(target-eye)
-    r = unit(np.cross(np.array([0.,1.,0.]), f))
-    u = np.cross(f,r)
+    # right = forward x world_up, so east stays on the right like in the 2D game
+    r = unit(np.cross(f, np.array([0., 1., 0.])))
+    u = np.cross(r, f)
     d = point-eye
     return np.array([np.dot(d,r), np.dot(d,u), np.dot(d,f)])
 # Block 2: switchable projection
