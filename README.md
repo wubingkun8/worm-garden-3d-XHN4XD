@@ -25,28 +25,36 @@ Tested with Python 3.14.7, numpy 2.5.3, Pillow 12.3.0, pygame-ce 2.5.8
 | `python first_maze.py` | wireframe 3D maze (`--cols N --rows M --ortho --shot FILE`) |
 | `python solid_maze.py` | solid 3D maze with Z-buffer (`--cols --rows --ortho --reverse --shot`) |
 | `python textured_maze.py` | textured and lit maze (`--cols --rows --ortho --flat --light N --checker --shot`) |
+| `python walk_maze.py` | M8: walk the worm with WASD, wall collision (`--cols --rows --demo --shot`) |
 | `python report_shots.py` | regenerates screenshots 03, 04 and 06–11 at 900×700 |
 | `python first_maze.py --cols 10 --rows 10 --shot screenshots\05_maze_wireframe_10x10.png` | 10×10 scalability check (120 boxes) |
 | `python tests\test_math.py` | coordinate and matrix tests |
 | `python tests\test_renderer.py` | depth-buffer, clipping and draw-order tests |
 | `python tests\test_textures.py` | texture sampling, materials and perspective UV tests |
+| `python tests\test_physics.py` | movement, frame-rate independence and wall collision tests |
 
 Full original maze layout:
 
 ```
 python solid_maze.py --cols 23 --rows 15
 python textured_maze.py --cols 23 --rows 15
+python walk_maze.py --cols 23 --rows 15
 ```
 
 ## Controls
 
 | Key | Action |
 |---|---|
+| `W A S D` | move the worm on the X/Z plane (W is north, -Z) |
 | `P` | toggle between perspective and orthographic projection |
 | `R` | toggle draw order near→far / far→near (solid viewer only) |
-| `T` | toggle textures on/off (textured viewer only) |
+| `T` | toggle textures on/off (textured and walk viewers) |
 | `L` | cycle the light direction (textured viewer only) |
 | `ESC` | quit |
+
+Movement follows handbook chapter 11: world-aligned keys, normalised diagonal
+input, 4.6 units/s and a 0.22 radius, with X and Z resolved separately so the
+worm slides along walls instead of stopping dead.
 
 Original 2D game: `W A S D` to move, collect the apples, avoid water holes and the bird.
 
@@ -77,6 +85,8 @@ first_cube.py      M2/M4 mini-lab: rotating cube, P toggles projection
 first_maze.py      M3/M4 viewer: wireframe maze
 solid_maze.py      M5 viewer: solid maze, shading and depth
 textured_maze.py   M7 viewer: textured and lit maze, T and L keys
+physics.py         worm movement, circle-vs-AABB collision, substep anti-tunnelling
+walk_maze.py       M8 viewer: walk the worm with WASD, follow camera, --demo log
 report_shots.py    batch script that regenerates the report screenshots
 tests/             numerical, renderer and texture tests
 screenshots/       evidence images, all 900x700 internal resolution
@@ -98,6 +108,8 @@ screenshots/       evidence images, all 900x700 internal resolution
 | `09_textured_ortho.png` | the same textured scene and camera, orthographic |
 | `10_textured_light_rotated.png` | same scene with the light moved to 2: walls change brightness |
 | `11_textured_checker_floor.png` | checker floor: perspective-correct UV has no linear distortion |
+| `12_worm_start.png` | M8: the worm in its start cell, follow camera, textured maze |
+| `13_worm_against_wall.png` | M8: worm pressed into the north-east corner, HUD reports SLIDING |
 
 All of them are reproducible: fixed seed 7, fixed camera angle 0.55, internal
 render resolution 900×700 (stated in the on-screen HUD of every image).
@@ -108,9 +120,10 @@ render resolution 900×700 (stated in the on-screen HUD of every image).
 python tests\test_math.py        ->  all tests passed
 python tests\test_renderer.py    ->  renderer tests passed
 python tests\test_textures.py    ->  texture tests passed
+python tests\test_physics.py     ->  physics tests passed
 ```
 
-Twelve assertions in total:
+Nineteen assertions in total:
 
 * `test_math.py` — cell centre conversion, old 2D pixel to world conversion,
   matrix translation, Y rotation, and point/direction transform.
@@ -123,6 +136,12 @@ Twelve assertions in total:
   between its two triangles; the half-way point of a strongly foreshortened quad
   is not at 50 % of the screen width, which proves the UV interpolation is
   perspective-correct and not linear.
+* `test_physics.py` — W+D is a unit vector (diagonals are not faster); one second
+  of walking covers the same distance at 60 and 200 fps; the worm stops exactly
+  one radius short of a wall face; a blocked axis does not stop the other axis
+  (wall sliding); a 0.5 s frame does not tunnel through a 0.16 thick wall; the
+  collision footprint is exactly the mesh footprint; the worm does not spawn
+  inside a wall.
 
 ## Progress
 
@@ -131,7 +150,9 @@ Twelve assertions in total:
 - [x] M5 solid surfaces, depth buffer, draw-order independence
 - [x] M6 maze conversion, wall flags match the original 2D data
 - [x] M7 lighting and textures: stone and grass materials, perspective-correct UV
-- [ ] M8–M10 movement, jumping, hazards, birds, apples, levels
+- [x] M8 worm movement and collision: WASD on X/Z, sliding along walls, seven physics tests
+- [ ] M9 jumping and hazards (height-aware water and bird rules)
+- [ ] M10 birds, apples, level rules
 - [ ] M11 particles, HUD, quality
 - [ ] M12 extensions, report, demo recording
 

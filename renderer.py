@@ -120,13 +120,13 @@ class Renderer:
         if x0 > x1 or y0 > y1:
             return
 
-        px = np.arange(x0, x1 + 1, dtype=float) + 0.5
-        py = np.arange(y0, y1 + 1, dtype=float) + 0.5
-        X, Y = np.meshgrid(px, py)
+        px = (np.arange(x0, x1 + 1, dtype=np.float32) + 0.5)[None, :]
+        py = (np.arange(y0, y1 + 1, dtype=np.float32) + 0.5)[:, None]
 
-        wa = self._edge(b, c, X, Y) / area
-        wb = self._edge(c, a, X, Y) / area
-        wc = self._edge(a, b, X, Y) / area
+        # Broadcasting instead of meshgrid: same weights, no (h, w) temporaries
+        wa = ((px - b[0]) * (c[1] - b[1]) - (py - b[1]) * (c[0] - b[0])) / area
+        wb = ((px - c[0]) * (a[1] - c[1]) - (py - c[1]) * (a[0] - c[0])) / area
+        wc = ((px - a[0]) * (b[1] - a[1]) - (py - a[1]) * (b[0] - a[0])) / area
 
         mask = (wa >= -1e-9) & (wb >= -1e-9) & (wc >= -1e-9)
         if not mask.any():

@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 from transforms import translation, scale, transform_point
@@ -140,3 +142,61 @@ def scene_faces(boxes, tiles=TILES_PER_UNIT):
         for quad, uv, normal in box_face_quads(center, size, tiles):
             faces.append((box_index, quad, uv, normal))
     return faces
+
+
+def sphere_mesh(radius, center=(0.0, 0.0, 0.0), rings=8, segments=12):
+    """Latitude/longitude sphere as triangles whose winding faces outwards.
+
+    Returns a list of (a, b, c, normal) with a, b, c in world space. Low
+    polygonal on purpose: flat shading makes the facets visible, which keeps the
+    polygon count predictable for the software rasterizer.
+    """
+    cx, cy, cz = center
+    rings = max(3, rings)
+    segments = max(3, segments)
+
+    grid = []
+    for i in range(rings + 1):
+        phi = math.pi * i / rings
+        ring_y = math.cos(phi) * radius
+        ring_r = math.sin(phi) * radius
+        row = []
+        for j in range(segments):
+            theta = 2.0 * math.pi * j / segments
+            row.append(np.array([cx + ring_r * math.cos(theta),
+                                 cy + ring_y,
+                                 cz + ring_r * math.sin(theta)], dtype=float))
+        grid.append(row)
+
+    triangles = []
+    # top and bottom caps: the pole is one vertex, so no degenerate triangles
+    for j in range(segments):
+        triangles.append((grid[0][0],
+                          grid[1][(j + 1) % segments],
+                          grid[1][j]))
+        triangles.append((grid[rings][0],
+                          grid[rings - 1][j],
+                          grid[rings - 1][(j + 1) % segments]))
+
+    for i in range(1, rings - 1):
+        for j in range(segments):
+            a = grid[i][j]
+            b = grid[i][(j + 1) % segments]
+            c = grid[i + 1][(j + 1) % segments]
+            d = grid[i + 1][j]
+            triangles.append((a, b, c))
+            triangles.append((a, c, d))
+
+    out = []
+    centre = np.array([cx, cy, cz], dtype=float)
+    for a, b, c in triangles:
+        normal = np.cross(b - a, c - a)
+        length = np.linalg.norm(normal)
+        if length < 1e-12:
+            continue
+        normal = normal / length
+        if float(np.dot(normal, (a + b + c) / 3.0 - centre)) < 0.0:
+            b, c = c, b
+            normal = -normal
+        out.append((a, b, c, normal))
+    return out
