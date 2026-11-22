@@ -31,6 +31,36 @@ def clip_near(tri, near=NEAR):
             for i in range(1, len(visible) - 1)]
 
 
+def clip_near_attrs(tri, attrs, near=NEAR):
+    """Same clipping as clip_near, but carries per-vertex attributes (UVs).
+
+    A vertex created on a clipped edge gets its attributes linearly
+    interpolated; in camera space the edge is a straight segment, so the
+    interpolation is exact. Returns (3 points, 3 attributes) tuples.
+    """
+    pts = [np.asarray(v, dtype=float) for v in tri]
+    ats = [np.asarray(a, dtype=float) for a in attrs]
+    out_pts, out_ats = [], []
+    for i in range(3):
+        s, e = pts[i], pts[(i + 1) % 3]
+        sa, ea = ats[i], ats[(i + 1) % 3]
+        inside_s = s[2] >= near
+        inside_e = e[2] >= near
+        if inside_s != inside_e:
+            t = (near - s[2]) / (e[2] - s[2])
+            out_pts.append(s + t * (e - s))
+            out_ats.append(sa + t * (ea - sa))
+        if inside_e:
+            out_pts.append(e)
+            out_ats.append(ea)
+
+    if len(out_pts) < 3:
+        return []
+    return [(out_pts[0], out_pts[i], out_pts[i + 1],
+             out_ats[0], out_ats[i], out_ats[i + 1])
+            for i in range(1, len(out_pts) - 1)]
+
+
 def face_normal(a, b, c):
     n = np.cross(b - a, c - a)
     length = np.linalg.norm(n)
@@ -66,8 +96,15 @@ class Renderer:
     def _edge(a, b, px, py):
         return (px - a[0]) * (b[1] - a[1]) - (py - a[1]) * (b[0] - a[0])
 
-    def draw_triangle(self, a, b, c, rgb):
-        """a, b, c are (screen_x, screen_y, camera_depth) tuples."""
+    def draw_triangle(self, a, b, c, rgb=None, uv=None, texture=None,
+                      intensity=1.0):
+        """a, b, c are (screen_x, screen_y, camera_depth) tuples.
+
+        Flat colour: pass rgb. Textured: pass uv (three (u, v) pairs), texture
+        (H x W x 3 array) and a diffuse intensity. UVs are interpolated
+        perspective-correctly with u/z, v/z and 1/z (handbook 10.3), reusing the
+        same barycentric weights as the depth buffer.
+        """
         self.triangles += 1
 
         area = self._edge(a, b, c[0], c[1])
@@ -108,7 +145,32 @@ class Renderer:
             return
 
         depth_view[win] = z[win]
-        self.color[y0:y1 + 1, x0:x1 + 1][win] = rgb
+
+        if texture is None or uv is None:
+            if rgb is None:
+                raise ValueError("draw_triangle needs rgb or texture+uv")
+            self.color[y0:y1 + 1, x0:x1 + 1][win] = rgb
+            return
+
+        tex_h, tex_w = texture.shape[:2]
+        tex_flat = texture.reshape(-1, 3)
+        (ua, va), (ub, vb), (uc, vc) = uv
+
+        # Perspective-correct UV, evaluated only on visible pixels (handbook 10.3)
+        iz = inv_z[win]
+        waw, wbw, wcw = wa[win], wb[win], wc[win]
+        u = (waw * ua / a[2] + wbw * ub / b[2] + wcw * uc / c[2]) / iz
+        v = (waw * va / a[2] + wbw * vb / b[2] + wcw * vc / c[2]) / iz
+
+        txi = ((u - np.floor(u)) * tex_w).astype(np.int32)
+        tyi = ((v - np.floor(v)) * tex_h).astype(np.int32)
+        np.clip(txi, 0, tex_w - 1, out=txi)
+        np.clip(tyi, 0, tex_h - 1, out=tyi)
+
+        cols = tex_flat[tyi * tex_w + txi].astype(np.float32)
+        if intensity != 1.0:
+            cols *= float(intensity)
+        self.color[y0:y1 + 1, x0:x1 + 1][win] = np.clip(cols, 0, 255).astype(np.uint8)
 
     def to_surface(self, pygame):
         rgb = np.ascontiguousarray(self.color, dtype=np.uint8)

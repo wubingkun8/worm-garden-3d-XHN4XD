@@ -11,11 +11,12 @@ import numpy as np
 import pygame
 
 from maze import generate_maze
-from geometry import scene_boxes, box_world_vertices, CUBE_EDGES
+from geometry import scene_boxes, scene_faces, box_world_vertices, CUBE_EDGES
 from camera import (camera_space, perspective_project, orthographic_project,
                     orbit_eye, normalized)
 from renderer import Renderer
 import solid_maze as sm
+import textured_maze as tm
 
 W, H = 900, 700
 COLS, ROWS = 3, 3
@@ -117,6 +118,37 @@ def shoot_solid(path, ortho=False):
     print("saved:", path, f"({renderer.triangles} triangles drawn)")
 
 
+def shoot_textured(path, ortho=False, light_index=0, checker=False):
+    """M7 frames: textured and lit, rendered through textured_maze.render_scene."""
+    maze, _, _ = generate_maze(COLS, ROWS, seed=SEED)
+    boxes = scene_boxes(maze, COLS, ROWS)
+    faces = scene_faces(boxes)
+    eye, target = camera_for()
+    view_dir = normalized(target - eye)
+    scale = ortho_scale()
+
+    if ortho:
+        project = lambda c: orthographic_project(c, W, H, scale, NEAR)
+    else:
+        project = lambda c: perspective_project(c, W, H, FOV, NEAR)
+
+    renderer = Renderer(W, H, tm.SKY_RGB)
+    tm.render_scene(renderer, faces, eye, target, project, view_dir,
+                    tm.LIGHT_DIRS[light_index], False, True,
+                    "checker" if checker else tm.FLOOR_TEXTURE)
+
+    screen = pygame.display.get_surface()
+    screen.blit(renderer.to_surface(pygame), (0, 0))
+
+    mode = "ORTHOGRAPHIC" if ortho else "PERSPECTIVE"
+    material = "checker floor" if checker else "textured"
+    screen.blit(hud(f"{mode}  |  {COLS}x{ROWS}  |  {material}  |  "
+                    f"light {light_index + 1}  |  tris {renderer.triangles}"
+                    f"  |  {W}x{H}"), (12, 10))
+    pygame.image.save(screen, path)
+    print("saved:", path, f"({renderer.triangles} triangles drawn)")
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     setup()
@@ -127,9 +159,15 @@ def main():
     shoot_solid(os.path.join(OUT_DIR, "06_maze_solid_3x3.png"))
     shoot_solid(os.path.join(OUT_DIR, "07_maze_solid_3x3_ortho.png"),
                 ortho=True)
+    shoot_textured(os.path.join(OUT_DIR, "08_textured_perspective.png"))
+    shoot_textured(os.path.join(OUT_DIR, "09_textured_ortho.png"), ortho=True)
+    shoot_textured(os.path.join(OUT_DIR, "10_textured_light_rotated.png"),
+                   light_index=1)
+    shoot_textured(os.path.join(OUT_DIR, "11_textured_checker_floor.png"),
+                   checker=True)
 
     pygame.quit()
-    print("done: 4 screenshots in", OUT_DIR)
+    print("done: 8 screenshots in", OUT_DIR)
 
 
 if __name__ == "__main__":

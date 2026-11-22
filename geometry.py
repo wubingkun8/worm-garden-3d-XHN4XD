@@ -20,6 +20,18 @@ CUBE_EDGES = [
     (0, 4), (1, 5), (2, 6), (3, 7),
 ]
 
+# Six quads of a cube, counter-clockwise seen from outside (so normals point out)
+BOX_FACES = [
+    (1, 0, 3, 2),   # -Z
+    (4, 5, 6, 7),   # +Z
+    (1, 2, 6, 5),   # +X
+    (0, 4, 7, 3),   # -X
+    (3, 7, 6, 2),   # +Y (top)
+    (0, 1, 5, 4),   # -Y (bottom)
+]
+
+TILES_PER_UNIT = 1.0   # one texture tile covers one world unit
+
 # World units, scaled from the original pixels by CELL = 50
 WALL_H = 0.75          # 0.75 units high
 WALL_T = 8 / 50         # 0.16 units thick
@@ -69,9 +81,15 @@ def box_world_vertices(center, size):
 
 
 def floor_box(cols, rows):
-    """A thin slab whose top face sits exactly at Y = 0."""
+    """A thin slab whose top face sits exactly at Y = 0.
+
+    The slab stops at the inner face of the boundary walls. Extending it under
+    the walls produced a one-pixel grass seam along the wall silhouette, because
+    the slab edge and the wall face met at almost the same depth.
+    """
+    inset = WALL_T
     return ((cols / 2.0, -0.01, rows / 2.0),
-            (float(cols), 0.02, float(rows)))
+            (float(cols) - 2 * inset, 0.02, float(rows) - 2 * inset))
 
 
 def scene_boxes(maze, cols, rows):
@@ -79,3 +97,46 @@ def scene_boxes(maze, cols, rows):
     boxes = [floor_box(cols, rows)]
     boxes.extend(maze_wall_boxes(maze, cols, rows))
     return boxes
+
+
+def face_uv(quad, normal, tiles=TILES_PER_UNIT):
+    """UV corners for one quad, in world units, so the texture tiles once per unit.
+
+    Vertical faces: u runs along the horizontal direction of the face, v runs
+    downwards from its top edge, so bricks and grass stay upright. Horizontal
+    faces use X and Z directly.
+    """
+    if abs(normal[1]) < 0.9:
+        tangent = np.cross(np.array([0.0, 1.0, 0.0]), normal)
+        length = np.linalg.norm(tangent)
+        tangent = tangent / length if length > 1e-12 else np.array([1.0, 0.0, 0.0])
+        u = quad @ tangent
+        v = quad[:, 1].max() - quad[:, 1]
+    else:
+        u = quad[:, 0]
+        v = quad[:, 2]
+    return np.stack([u, v], axis=1) * tiles
+
+
+def box_face_quads(center, size, tiles=TILES_PER_UNIT):
+    """List of (4 world corners, 4 UV corners, outward normal) for one box."""
+    verts = box_world_vertices(center, size)
+    faces = []
+    for indices in BOX_FACES:
+        quad = verts[list(indices)]
+        normal = np.cross(quad[1] - quad[0], quad[3] - quad[0])
+        length = np.linalg.norm(normal)
+        if length < 1e-12:
+            continue
+        normal = normal / length
+        faces.append((quad, face_uv(quad, normal, tiles), normal))
+    return faces
+
+
+def scene_faces(boxes, tiles=TILES_PER_UNIT):
+    """Flatten a box list into textured faces (index 0 keeps the floor separate)."""
+    faces = []
+    for box_index, (center, size) in enumerate(boxes):
+        for quad, uv, normal in box_face_quads(center, size, tiles):
+            faces.append((box_index, quad, uv, normal))
+    return faces
