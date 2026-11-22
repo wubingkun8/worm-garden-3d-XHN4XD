@@ -200,3 +200,28 @@ def sphere_mesh(radius, center=(0.0, 0.0, 0.0), rings=8, segments=12):
             normal = -normal
         out.append((a, b, c, normal))
     return out
+
+
+def disc_mesh(radius, center=(0.0, 0.0, 0.0), segments=20):
+    """Flat triangle fan on the X/Z plane, facing up (+Y).
+
+    Used for the water holes: a disc a few millimetres above the floor reads as
+    a puddle from the follow camera, and the fan keeps the triangle count low.
+    """
+    cx, cy, cz = center
+    segments = max(3, segments)
+    rim = []
+    for j in range(segments):
+        theta = 2.0 * math.pi * j / segments
+        rim.append(np.array([cx + radius * math.cos(theta), cy,
+                             cz + radius * math.sin(theta)], dtype=float))
+
+    out = []
+    up = np.array([0.0, 1.0, 0.0])
+    for j in range(segments):
+        a = np.array([cx, cy, cz], dtype=float)
+        b = rim[j]
+        c = rim[(j + 1) % segments]
+        # wound so that cross(b-a, c-a) points up: rim goes clockwise seen from above
+        out.append((a, c, b, up))
+    return out

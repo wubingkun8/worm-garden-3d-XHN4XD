@@ -8,10 +8,18 @@ import math
 
 import numpy as np
 
+from geometry import WALL_H
+
 WORM_RADIUS = 11 / 50.0     # 0.22 world units
 WORM_SPEED = 230 / 50.0     # 4.6 world units per second
 GROUND_Y = WORM_RADIUS      # sphere centre when resting on the floor
 MAX_STEP = 0.05             # longest single test step, so nothing tunnels
+
+# Jump, handbook 11.3: v0 = 3.2, g = 10, flight ~0.64 s, rise ~0.512 units
+GRAVITY = 10.0
+JUMP_SPEED = 3.2
+JUMP_COOLDOWN = 0.65        # the 2D source used the same cooldown
+VERTICAL_STEP = 0.02        # integrate the arc in small steps, long frames included
 
 
 def movement_direction(keys, pygame_module):
@@ -62,13 +70,59 @@ class Player:
         self.radius = float(radius)
         self.speed = float(speed)
         self.ground_y = float(ground_y)
-        self.vertical_speed = 0.0      # used by the jump in milestone 9
+        self.vertical_speed = 0.0      # world units per second, +Y is up
+        self.jump_cooldown = 0.0
         self.blocked = False
 
     def position(self):
         return np.array([self.x, self.y, self.z], dtype=float)
 
-    def collides(self, x, z, aabbs):
+    def feet_y(self):
+        """Height of the bottom of the sphere: the value hazard rules use."""
+        return self.y - self.radius
+
+    def airborne(self):
+        return self.y > self.ground_y + 1e-9 or self.vertical_speed > 0.0
+
+    def jump(self):
+        """Start a jump if grounded and the cooldown has expired."""
+        if self.airborne() or self.jump_cooldown > 0.0:
+            return False
+        self.vertical_speed = JUMP_SPEED
+        self.jump_cooldown = JUMP_COOLDOWN
+        return True
+
+    def update_vertical(self, dt):
+        """Euler integration of the jump arc, clamped to the ground plane.
+
+        The arc is stepped in VERTICAL_STEP slices so a long frame cannot make
+        the worm jump straight through the floor or overshoot its apex.
+        """
+        self.jump_cooldown = max(0.0, self.jump_cooldown - dt)
+        if not self.airborne() and self.vertical_speed == 0.0:
+            self.y = self.ground_y
+            return
+
+        slices = max(1, int(math.ceil(dt / VERTICAL_STEP)))
+        step = dt / slices
+        for _ in range(slices):
+            self.vertical_speed -= GRAVITY * step
+            self.y += self.vertical_speed * step
+            if self.y <= self.ground_y:
+                self.y = self.ground_y
+                self.vertical_speed = 0.0
+                break
+
+    def collides(self, x, z, aabbs, y=None):
+        """Horizontal footprint plus a height test against the wall body.
+
+        A jump only clears a wall if the worm's feet rise above WALL_H; with
+        v0 = 3.2 the feet peak at 0.512 and the walls are 0.75 high, so in
+        practice the worm is always blocked. The rule is still explicit here.
+        """
+        feet = self.feet_y() if y is None else float(y) - self.radius
+        if feet >= WALL_H:
+            return False
         return any(circle_hits_xz(x, z, self.radius, box) for box in aabbs)
 
     def move(self, direction, dt, aabbs):
